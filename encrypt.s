@@ -3,11 +3,11 @@
 .data
    string: .space 64
    key: .space 64
+   vowels: .space 64
    n: .space 4
    m: .space 4
    stringBits: .space 448
    keyBits: .space 448
-   vowels: .space 6
    formatString1: .asciz "%s"
    formatString2: .asciz "%[^\n]"
    formatInt: .asciz "%d\n"
@@ -24,11 +24,10 @@ main:
    pushl $formatInt
    call scanf
    addl $8, %esp
+
+   # STORE VALUE FOR LATER 
+   pushl n
    
-   cmpb $1, n
-   je main_decrypt
-   
-main_encrypt:
    # READING THE TWO INPUT STRINGS
    leal string, %eax
    pushl %eax
@@ -41,8 +40,9 @@ main_encrypt:
    pushl $formatString1
    call scanf
    addl $8, %esp
-   
-   # GETTING THE LENGTHS OF THE TEXT AND ENCRYPTION KEY
+
+   # BEFORE ENCRYPTING/DECRYPTING, THE TEXT/KEY LENGTHS HAVE TO MATCH EACHOTHER
+   # GET THE LENGTHS OF THE TEXT AND ENCRYPTION KEY
    leal string, %esi
    leal key, %edi
    
@@ -50,26 +50,30 @@ main_encrypt:
    call strlen
    addl $4, %esp
    
+   # n = LENGTH OF TEXT
    movb %al, n
    
    pushl %edi
    call strlen
    addl $4, %esp
+
+   # m = LENGTH OF KEY
    movb %al, m
-   
+
    # 2 CASES:
    # a) n <= m (LENGTH OF TEXT <= LENGTH OF ENCRYPTION KEY)
-   # b) n > m (LENGTH OF TEXT > LENGTH OF ENCRYPTION KEY) => REPEAT THE TEXT
+   # b) n > m (LENGTH OF TEXT > LENGTH OF ENCRYPTION KEY) => REPEAT THE KEY
    cmpb %al, n
-   jbe pre_vigenere
+   jbe encrypt_or_decrypt
    
+   # THEY ARE NOT EQUAL
+   # ADD CHARACTERS TO THE KEY SO IT MATCHES THE TEXT'S LENGTH 
    xorl %ecx, %ecx
    xorl %ebx, %ebx
    
-   # ADD CHARACTERS TO THE KEY SO IT MATCHES THE TEXT'S LENGTH 
    add_chars:
       cmpb n, %al
-      je pre_vigenere
+      je encrypt_or_decrypt
       
       movb (%edi, %ecx, 1), %bl
       movb %bl, (%edi, %eax, 1)
@@ -82,6 +86,279 @@ main_encrypt:
       add_chars_final:
          incb %al
          jmp add_chars
+   
+encrypt_or_decrypt:
+   # RESTORE THE PUSHED 0/1 VALUE
+   popl %edx
+   cmpb $1, %dl
+   jne pre_vigenere
+
+decrypt:
+   # THEY ARE EQUAL => DECRYPTION
+   # WE HAVE THE ENCRYPTED TEXT AND THE ENCRYPTION KEY
+   # INPUT THE LETTERS STRING: 0=VOWEL, 1=CONSONANT, 2=OTHER
+   leal vowels, %eax
+   pushl %eax
+   pushl $formatString1
+   call scanf
+   addl $8, %esp
+   
+   # PRINT FOR DEBUGGING PURPOSES
+   leal key, %eax
+   pushl %eax
+   pushl $formatStringPrint
+   call printf
+   pushl $0
+   call fflush
+   addl $12, %esp
+
+   # GO THROUGH EVERY TEXT CHARACTER. IF IT'S NOT A LETTER, SKIP
+   # CHECK IF IT'S A VOWEL OR CONSONANT (USING THE VOWELS ARRAY)
+   # CHECK IF THE CURRENT KEY CHAR IS A VOWEL OR CONSONANT
+   # GET THE CASE (VV/VC/CV/CC)
+   # FIND THE POST-VIGENERE ENCRYPTED TEXT
+   xorl %ecx, %ecx
+
+   decrypt_for:
+      cmpb n, %cl
+      je print_string
+
+      leal vowels, %esi
+      xorl %ebx, %ebx
+      movb (%esi, %ecx, 1), %bl
+      subb $48, %bl
+      cmpb $2, %bl 
+      je decrypt_final # IT'S NOT A LETTER
+
+      xorl %edx, %edx
+      movb (%edi, %ecx, 1), %dl  # GET THE KEY CHAR
+      
+      pushl %ecx # STORE THE COUNTER
+
+      pushl %edx # PUSH THE keyChar
+      call check_vowel_consonant # 0 => keyChar IS A VOWEL, 1 => keyChar IS A CONSONANT
+      popl %edx
+      
+      pushl %eax # 0/1 FOR keyChar
+      pushl %ebx # 0/1 FOR encryptedChar
+      call check_case # 0=VV, 1=VC, 2=CV, 3=CC
+      addl $8, %esp
+
+      # %eax NOW STORES THE CASE CODE 
+      # FOR ALL CASES THERE IS A COMMON RULE: THE NUMBER OF 1'S / 0'S
+      # STORE %eax, CALL count_bits TO GET THE NUMBER OF 1'S IN keyChar
+      pushl %eax # SAVE THE CASE CODE
+      pushl %edx # FUNCTION ARGUMENT = THE LETTER (keyChar)
+      call count_bits
+      popl %edx 
+      
+      movl %eax, m # STORE THE NUMBER OF 1'S IN m 
+      popl %eax    # RESTORE THE CASE CODE 
+
+      debug_here:
+
+      leal string, %esi
+      xorl %ebx, %ebx 
+      popl %ecx                  # RESTORE THE COUNTER
+      movb (%esi, %ecx, 1), %bl # GET encryptedChar
+      pushl %ecx                 # STORE THE COUNTER AGAIN
+
+      pushl %edx # keyChar
+      pushl %ebx # encryptedChar
+      pushl m    # NUMBER OF 1's 
+      pushl %eax # CASE
+      call decrypt_bits 
+      addl $16, %esp
+
+      # STORE THE DECRYPTED LETTER
+      popl %ecx # RESTORE THE COUNTER
+      movb %al, (%esi, %ecx, 1)
+
+      decrypt_final:
+         incb %cl 
+         jmp decrypt_for
+
+decrypt_bits:
+   pushl %ebp 
+   movl %esp, %ebp
+
+   # 20(%ebp) = keyChar
+   # 16(%ebp) = encryptedChar
+   # 12(%ebp) = NUMBER OF 1's
+   # 8(%ebp)  = CASE CODE
+
+   movl 8(%ebp), %eax 
+   movl 12(%ebp), %ecx 
+   movl 16(%ebp), %ebx 
+   addb %cl, %bl 
+   cmpb $1, %al # CASE 0 OR 1 => ADD NUMBER OF 1'S, OTHERWISE ADD NUMBER OF 0'S
+   jbe decrypt_bits_cont
+
+   subb %cl, %bl # CANCEL THE LAST OPERATION
+   addb $7, %bl 
+   subb %cl, %bl # ADD 7 AND SUBSTRACT 1'S = NUMBER OF 0'S
+
+   decrypt_bits_cont:
+      # CASE 1 OR 2 => THE DECRYPTING IS FINISHED
+      cmpb $1, %al 
+      je decrypt_bits_VC_CV
+      cmpb $2, %al 
+      je decrypt_bits_VC_CV
+
+      # CASE 3 OR 4 => vigenereBit ^ keyBit = encryptedBit, vigenereBit = ?
+      # STORE THE SUM OF THE 2-POWERS (BITS) IN %eax
+      # 2^6 WILL ALWAYS BE INCLUDED (ALL LETTERS > 64)
+      movb $64, %al
+      movl 20(%ebp), %edx # GET keyChar 
+      subb $64, %bl 
+      subb $64, %dl 
+      movb $32, %cl 
+
+      decrypt_bits_for:
+         # X ^ 0 = 0 => X = 0
+         # X ^ 0 = 1 => X = 1
+         # X ^ 1 = 0 => X = 1
+         # X ^ 1 = 1 => X = 0
+         # X = 0 IF SUM IS 0 OR 2, OTHERWISE X = 1
+         cmpb $0, %cl 
+         je decrypt_bits_final 
+
+         movl $0, m
+         subl %ecx, %ebx 
+         subl %ecx, %edx 
+
+         cmpl $0, %ebx 
+         jge decrypt_bits_for_cont 
+
+         incb m 
+         addl %ecx, %ebx 
+
+         decrypt_bits_for_cont:
+            cmpl $0, %edx 
+            jge decrypt_bits_for_xor
+
+            incb m
+            addl %ecx, %edx
+
+         decrypt_bits_for_xor:
+            cmpl $1, m 
+            jne decrypt_bits_for_final 
+
+            addb %cl, %al 
+
+         decrypt_bits_for_final:
+            shrb $1, %cl 
+            jmp decrypt_bits_for 
+
+   decrypt_bits_VC_CV:
+      movb %bl, %al 
+
+   decrypt_bits_final:
+      popl %ebp 
+      ret
+
+count_bits:
+   pushl %ebp 
+   movl %esp, %ebp 
+
+   # 8(%ebp) = ASCII FOR THE KEY LETTER 
+   movl 8(%ebp), %ebx 
+   subb $64, %bl # LETTERS WILL ALWAYS HAVE 2^6
+   movl $1, %eax # USE %ecx TO COUNT THE NUMBER OF 1'S
+   movl $32, %ecx 
+
+   count_bits_for:
+      cmpl $0, %ecx 
+      je count_bits_final 
+
+      subl %ecx, %ebx 
+      cmpl $0, %ebx 
+      jge count_bits_for_cont # THE 2-POWER IS VALID 
+
+      addl %ecx, %ebx 
+      jmp count_bits_for_final
+
+      count_bits_for_cont:
+         incb %al
+
+      count_bits_for_final:
+         shrb $1, %cl 
+         jmp count_bits_for 
+
+   count_bits_final:
+      popl %ebp
+      ret 
+
+check_case:
+   pushl %ebp
+   movl %esp, %ebp
+   
+   # 8(%ebp)  = 0/1 OF vigenereChar
+   # 12(%ebp) = 0/1 OF keyChar
+   
+   movl 8(%ebp), %ebx 
+   movl 12(%ebp), %eax
+
+   cmpb $0, %bl
+   je check_case_VX
+   
+   # %ebx = CONSONANT => CASE 2/3 (CV, CC)
+   cmpb $0, %al
+   je check_case_CV # CASE 2 (CV)
+   
+   # %eax = CONSONANT => CASE 3 (CC)
+   addb $2, %al
+   jmp check_case_final
+   
+   check_case_VX:
+      # %ebx = VOWEL => CASE 0/1 (VV, VC)
+      cmpb $0, %al
+      je check_case_final
+      
+      # %eax = CONSONANT => CASE 1 (VC)
+      jmp check_case_final
+      
+   check_case_CV:
+      movb $2, %al
+   
+   check_case_final:
+      popl %ebp
+      ret
+   
+check_vowel_consonant:
+   # FUNCTION THAT CHECKS IF A LETTER IS A VOWEL OR A CONSONANT
+   # 8(%ebp) = keyChar
+   # RETURN: 0 = VOWEL, 1 = CONSONANT
+   pushl %ebp
+   movl %esp, %ebp
+   
+   # MAKE IT UPPERCASE
+   movl 8(%ebp), %edx 
+   cmpb $97, %dl
+   jb check_vowel_consonant_cont
+   subb $32, %dl
+   
+   check_vowel_consonant_cont:
+      cmpb $65, %dl # 'A' = 65
+      je case_vowel
+      cmpb $69, %dl # 'E' = 69
+      je case_vowel
+      cmpb $73, %dl # 'I' = 73
+      je case_vowel
+      cmpb $79, %dl # 'O' = 79
+      je case_vowel
+      cmpb $85, %dl # 'U' = 85
+      je case_vowel
+      
+      movb $1, %al
+      jmp check_vowel_consonant_final
+      
+   case_vowel:
+      xorb %al, %al
+   
+   check_vowel_consonant_final:
+      popl %ebp
+      ret
    
 # PRINT THE ENCRYPTION KEY FOR DEBUGGING PURPOSES
 pre_vigenere:
@@ -420,7 +697,7 @@ encrypt_bits:
    # LET THE CC CASE GO FORWARDS TO CASE_VV.
    
    case_VV:
-      # VV => stringBits = (stringBits & keyBits)
+      # VV => stringBits = (stringBits[1:] ^ keyBits[1:])
       movw 8(%ebp), %cx
       decw %cx
       movl 8(%ebp), %edx
@@ -428,13 +705,13 @@ encrypt_bits:
       
       case_VV_for:
          cmpw %dx, %cx
-         jl encrypt_bits_final
+         je encrypt_bits_final
          
          xorl %eax, %eax
          movb (%esi, %ecx, 1), %al
          xorl %ebx, %ebx
          movb (%edi, %ecx, 1), %bl
-         andb %bl, %al
+         xorb %bl, %al
          movb %al, (%esi, %ecx, 1)
          
          decw %cx
@@ -572,12 +849,17 @@ powers_of_2:
       movw %cx, %ax
       popl %ebp
       ret
-      
-# INPUT = 1 => PERFORM DECRYPTION
-# (todo)
-main_decrypt:
+
+print_string:
+   leal string, %esi
+   pushl %esi
+   pushl $formatStringPrint 
+   call printf 
+   pushl $0
+   call fflush 
+   addl $12, %esp
    
-exit:   
+exit:  
    movl $1, %eax
-   movl $0, %ebx
+   xorl %ebx, %ebx 
    int $0x80

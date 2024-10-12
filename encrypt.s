@@ -1,16 +1,15 @@
 .section .note.GNU-stack, "", %progbits
 
 .data
-   string: .space 64
-   key: .space 64
-   vowels: .space 64
+   string: .space 256
+   key: .space 256
+   vowels: .space 256
    n: .space 4
    m: .space 4
    formatString1: .asciz "%s"
    formatString2: .asciz "%[^\n]"
    formatInt: .asciz "%d\n"
    formatStringPrint: .asciz "%s\n"
-   formatChar: .asciz "%c"
    
 .text
 
@@ -70,6 +69,8 @@ main:
    xorl %ebx, %ebx
    
    add_chars:
+      # %eax IS THE MAIN COUNTER TO MATCH THE LENGTHS
+      # %ecx IS USED FOR THE LENGTH OF THE INITIAL KEY (REPEAT THE CHARS)
       cmpb n, %al
       je encrypt_or_decrypt
       
@@ -125,6 +126,11 @@ encrypt:
          call vigenere # ENCRYPT THE CURRENT LETTER USING VIGENERE
          addl $4, %esp 
          # HAVEN'T POPPED %edx OR $0 YET, SAVING THE VALUE FOR %edx
+
+         # addl $8, %esp
+         # popl %ecx
+         # movb %al, (%esi, %ecx, 1)
+         # jmp encrypt_final
 
          # %eax = vigenere-encryptedChar
          # SAVE IT SOMEWHERE
@@ -194,6 +200,7 @@ encrypt_bits:
    cmpb $2, %al 
    je encrypt_bits_CV
 
+   # IT IS CASE 0/3, BOTH HAVE SIMILAR OPERATIONS
    encrypt_bits_VV_CC:
       movl 12(%ebp), %edx # keyChar
       movb $64, %al       # STORE THE SUM IN %eax 
@@ -271,13 +278,13 @@ decrypt:
    addl $8, %esp
    
    # PRINT FOR DEBUGGING PURPOSES
-   leal key, %eax
-   pushl %eax
-   pushl $formatStringPrint
-   call printf
-   pushl $0
-   call fflush
-   addl $12, %esp
+   # leal key, %eax
+   # pushl %eax
+   # pushl $formatStringPrint
+   # call printf
+   # pushl $0
+   # call fflush
+   # addl $12, %esp
 
    # GO THROUGH EVERY TEXT CHARACTER. IF IT'S NOT A LETTER, SKIP
    # CHECK IF IT'S A VOWEL OR CONSONANT (USING THE VOWELS ARRAY)
@@ -342,8 +349,6 @@ decrypt:
       pushl %eax # vigenere-encryptedChar
       call vigenere 
       addl $12, %esp
-
-      debug_here:
 
       # STORE THE DECRYPTED LETTER
       popl %ecx # RESTORE THE COUNTER
